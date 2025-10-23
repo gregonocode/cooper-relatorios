@@ -1,0 +1,9 @@
+{
+  "functions": {
+    "app/**/route.{js,ts}": {
+      "includeFiles": "node_modules/@sparticuz/chromium/bin/**",
+      "memory": 1024,
+      "maxDuration": 60
+    }
+  }
+}
