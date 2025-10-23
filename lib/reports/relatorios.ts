@@ -67,8 +67,18 @@ function startOfDay(d: Date) {
 }
 
 /* ========== Launch Chromium (dual-path) ========== */
+/* ========== Launch Chromium (dual-path) ========== */
+
+// NOVO: permite forçar via env se precisar
 function isProdRuntime() {
-  return Boolean(process.env.AWS_REGION || process.env.VERCEL || process.env.LAMBDA_TASK_ROOT);
+  if (process.env.CHROMIUM_FORCE_PROD === "1") return true;
+  // Vercel Serverless Node expõe NEXT_RUNTIME = 'nodejs'
+  if (process.env.NEXT_RUNTIME === "nodejs") return true;
+  // Lambdas
+  if (process.env.AWS_REGION || process.env.LAMBDA_TASK_ROOT) return true;
+  // Vercel geralmente coloca VERCEL='1'
+  if (process.env.VERCEL === "1") return true;
+  return false;
 }
 
 async function resolveExecutablePathForDev(): Promise<string | null> {
