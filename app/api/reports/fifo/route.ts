@@ -1,15 +1,17 @@
 // app/api/reports/fifo/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { gerarRelatorioPersonalizadoPDF } from "@/lib/reports/relatorios";
+import { gerarRelatorioPersonalizadoPDF, getLaunchDebugInfo } from "@/lib/reports/relatorios";
 
 export const runtime = "nodejs";
+export const dynamic = "force-dynamic";
 export const maxDuration = 60;
 
-/**
- * GET /api/reports/fifo?from=YYYY-MM-DD&to=YYYY-MM-DD&userId=...
- * Use em <form target="_blank" method="GET" action="/api/reports/fifo">
- */
+function asArrayBuffer(u8: Uint8Array) {
+  return u8.buffer.slice(u8.byteOffset, u8.byteOffset + u8.byteLength);
+}
+
 export async function GET(req: NextRequest) {
+  const debug = new URL(req.url).searchParams.get("debug") === "1";
   try {
     const url = new URL(req.url);
     const from = url.searchParams.get("from") ?? "2025-06-01";
@@ -18,34 +20,42 @@ export async function GET(req: NextRequest) {
 
     const res = await gerarRelatorioPersonalizadoPDF({ from, to, userId });
 
-    // Se você ativar Storage no gerador e vier URL pública:
+    console.log("[FIFO][GET] LaunchInfo:", getLaunchDebugInfo());
+
     if ("url" in (res as any) && (res as any).url) {
       return NextResponse.redirect((res as any).url);
     }
 
-    // Uint8Array/Buffer -> ArrayBuffer “limpo”
     const pdf = res.buffer as Uint8Array;
-    const arrayBuffer = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength);
+    const arrayBuffer = asArrayBuffer(pdf);
 
-    return new NextResponse(arrayBuffer as ArrayBuffer, {
-      status: 200,
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="fifo_${from}_a_${to}.pdf"`,
-      },
-    });
-  } catch (e: any) {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `inline; filename="fifo_${from}_a_${to}.pdf"`,
+    };
+
+    // expose basic debug info in headers (não sensível)
+    const li = getLaunchDebugInfo();
+    headers["x-chromium-mode"] = li?.mode ?? "n/a";
+    headers["x-chromium-path"] = (li?.execPath ?? "null").slice(-40); // só tail por segurança
+
+    return new NextResponse(arrayBuffer as ArrayBuffer, { status: 200, headers });
+  } catch (e: unknown) {
+    console.error("[FIFO][GET] ERROR:", e, "LaunchInfo:", getLaunchDebugInfo());
+    if (new URL(req.url).searchParams.get("debug") === "1") {
+      return new NextResponse(
+        `ERROR\n${String(e)}\n\nLaunchInfo: ${JSON.stringify(getLaunchDebugInfo())}`,
+        { status: 500, headers: { "Content-Type": "text/plain" } }
+      );
+    }
     return NextResponse.json({ ok: false, where: "GET", error: String(e) }, { status: 500 });
   }
 }
 
-/**
- * POST /api/reports/fifo
- * Body: { from: "YYYY-MM-DD", to: "YYYY-MM-DD", userId?: string }
- * Use em fetch() no client; abra em nova aba criando URL via blob.
- */
 export async function POST(req: NextRequest) {
   const t0 = Date.now();
+  const url = new URL(req.url);
+  const debug = url.searchParams.get("debug") === "1";
   try {
     const body = await req.json().catch(() => ({}));
     const from = body.from ?? "2025-06-01";
@@ -54,24 +64,34 @@ export async function POST(req: NextRequest) {
 
     const res = await gerarRelatorioPersonalizadoPDF({ from, to, userId });
 
-    // Se você ativar Storage no gerador e vier URL pública:
+    console.log("[FIFO][POST] LaunchInfo:", getLaunchDebugInfo());
+
     if ("url" in (res as any) && (res as any).url) {
       return NextResponse.json({ ok: true, url: (res as any).url, ms: Date.now() - t0 });
     }
 
-    // Uint8Array/Buffer -> ArrayBuffer “limpo”
     const pdf = res.buffer as Uint8Array;
-    const arrayBuffer = pdf.buffer.slice(pdf.byteOffset, pdf.byteOffset + pdf.byteLength);
+    const arrayBuffer = asArrayBuffer(pdf);
 
-    return new NextResponse(arrayBuffer as ArrayBuffer, {
-      status: 200,
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `inline; filename="fifo_${from}_a_${to}.pdf"`,
-        "X-Render-Time": `${Date.now() - t0}ms`,
-      },
-    });
-  } catch (e: any) {
+    const headers: Record<string, string> = {
+      "Content-Type": "application/pdf",
+      "Content-Disposition": `inline; filename="fifo_${from}_a_${to}.pdf"`,
+      "X-Render-Time": `${Date.now() - t0}ms`,
+    };
+
+    const li = getLaunchDebugInfo();
+    headers["x-chromium-mode"] = li?.mode ?? "n/a";
+    headers["x-chromium-path"] = (li?.execPath ?? "null").slice(-40);
+
+    return new NextResponse(arrayBuffer as ArrayBuffer, { status: 200, headers });
+  } catch (e: unknown) {
+    console.error("[FIFO][POST] ERROR:", e, "LaunchInfo:", getLaunchDebugInfo());
+    if (debug) {
+      return new NextResponse(
+        `ERROR\n${String(e)}\n\nLaunchInfo: ${JSON.stringify(getLaunchDebugInfo())}`,
+        { status: 500, headers: { "Content-Type": "text/plain" } }
+      );
+    }
     return NextResponse.json({ ok: false, where: "POST", error: String(e) }, { status: 500 });
   }
 }
