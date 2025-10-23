@@ -72,12 +72,12 @@ function startOfDay(d: Date) {
 // NOVO: permite forçar via env se precisar
 function isProdRuntime() {
   if (process.env.CHROMIUM_FORCE_PROD === "1") return true;
-  // Vercel Serverless Node expõe NEXT_RUNTIME = 'nodejs'
+  // Vercel / Lambda markers
   if (process.env.NEXT_RUNTIME === "nodejs") return true;
-  // Lambdas
   if (process.env.AWS_REGION || process.env.LAMBDA_TASK_ROOT) return true;
-  // Vercel geralmente coloca VERCEL='1'
-  if (process.env.VERCEL === "1") return true;
+  if (process.env.VERCEL) return true; // any truthy value indicates Vercel
+  // Default to prod when NODE_ENV=production (safer on deployments)
+  if (process.env.NODE_ENV === "production") return true;
   return false;
 }
 
