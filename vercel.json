@@ -3,20 +3,17 @@
     "app/api/reports/fifo/route.ts": {
       "includeFiles": "node_modules/@sparticuz/chromium/bin/**",
       "memory": 1536,
-      "maxDuration": 90,
-      "regions": ["iad1"]
+      "maxDuration": 90
     },
     "app/api/reports/personalizado/route.ts": {
       "includeFiles": "node_modules/@sparticuz/chromium/bin/**",
       "memory": 1536,
-      "maxDuration": 90,
-      "regions": ["iad1"]
+      "maxDuration": 90
     },
     "app/api/reports/_chromium-check/route.ts": {
       "includeFiles": "node_modules/@sparticuz/chromium/bin/**",
       "memory": 1024,
-      "maxDuration": 60,
-      "regions": ["iad1"]
+      "maxDuration": 60
     }
   }
 }
