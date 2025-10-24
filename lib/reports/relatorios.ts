@@ -540,7 +540,7 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
       <div style="position:absolute; left:50%; transform:translateX(-50%); top:0; font-weight:700; font-size:14px; text-align:center; white-space:nowrap;">
         Controle de Produção - Mistura/Ensaque
       </div>
-      <img src="${__logoDataUrl}" style="position:absolute; right:0; top:0; height:20px; ${__logoDataUrl ? '' : 'display:none;'}" />
+      <img src="${__logoDataUrl}" style="position:absolute; left:0; top:0; height:20px; ${__logoDataUrl ? '' : 'display:none;'}" />
 
       <div style="margin-top:26px; display:flex; align-items:flex-start; justify-content:space-between;">
         <div style="font-size:10px; text-align:right; line-height:1.4; margin-left:auto;">
