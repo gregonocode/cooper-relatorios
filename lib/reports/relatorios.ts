@@ -524,19 +524,52 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
   const browser = await launchBrowser();
   const page = await browser.newPage();
 
+  // === Logo (header) como data URL (arquivo: public/imagens/selo.png) ===
+  let logoDataUrl = "";
+  try {
+    const path = await import("path");
+    const fs = await import("fs/promises");
+    const logoPath = path.join(process.cwd(), "public", "imagens", "selo.png");
+    const buf = await fs.readFile(logoPath);
+    logoDataUrl = `data:image/png;base64,${buf.toString("base64")}`;
+  } catch {
+    // Se a logo não existir, seguimos sem quebrar o PDF
+    logoDataUrl = "";
+  }
+
   const headerTemplate = `
     <div style="font-size:10px; width:100%; padding:0 12mm;">
-      <div style="display:flex; align-items:center; justify-content:space-between;">
-        <div style="font-weight:700; font-size:12px;">Controle de Produção — Mistura/Ensaque</div>
-        <div style="font-size:10px; text-align:right; line-height:1.4;">
+      <!-- Grid de 3 colunas: logo | título central | infos à direita -->
+      <div style="
+        display:grid;
+        grid-template-columns: 1fr auto 1fr;
+        align-items:center;
+        column-gap:12px;
+      ">
+        <!-- Coluna esquerda: logo -->
+        <div style="justify-self:start;">
+          ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Selo" style="height:28px; width:auto; display:block;" />` : ``}
+        </div>
+
+        <!-- Coluna central: título CENTRALIZADO e +2px -->
+        <div style="justify-self:center; text-align:center; font-weight:700; font-size:14px;">
+          Controle de Produção - Mistura/Ensaque
+        </div>
+
+        <!-- Coluna direita: infos do documento -->
+        <div style="justify-self:end; font-size:10px; text-align:right; line-height:1.4;">
           <div><span>Nº Documento: </span><strong>BPF 18</strong></div>
           <div>Data: 03/02/2025</div>
         </div>
       </div>
+
+      <!-- Período -->
       <div style="margin-top:6px; padding:8px; background:#f5f5f5; border-radius:6px; font-size:10px; font-weight:700;">
         Período: &nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;
       </div>
-      <div style="margin-top:4px; font-size:9px; color:#666;">
+
+      <!-- Paginação movida 8px para cima -->
+      <div style="margin-top:-4px; font-size:9px; color:#666;">
         Página <span class="pageNumber"></span> de <span class="totalPages"></span>
       </div>
     </div>`.trim();
