@@ -538,41 +538,60 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
   }
 
   const headerTemplate = `
-    <div style="font-size:10px; width:100%; padding:0 12mm;">
-      <!-- Grid de 3 colunas: logo | título central | infos à direita -->
-      <div style="
-        display:grid;
-        grid-template-columns: 1fr auto 1fr;
-        align-items:center;
-        column-gap:12px;
-      ">
-        <!-- Coluna esquerda: logo -->
-        <div style="justify-self:start;">
-          ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Selo" style="height:28px; width:auto; display:block;" />` : ``}
-        </div>
-
-        <!-- Coluna central: título CENTRALIZADO e +2px -->
-        <div style="justify-self:center; text-align:center; font-weight:700; font-size:14px;">
-          Controle de Produção - Mistura/Ensaque
-        </div>
-
-        <!-- Coluna direita: infos do documento -->
-        <div style="justify-self:end; font-size:10px; text-align:right; line-height:1.4;">
-          <div><span>Nº Documento: </span><strong>BPF 18</strong></div>
-          <div>Data: 03/02/2025</div>
-        </div>
+  <div style="
+    position: relative;
+    width: 100%;
+    height: 105px;                /* altura fixa do cabeçalho */
+    padding: 0 12mm;
+    box-sizing: border-box;
+    font-size: 10px;
+    -webkit-print-color-adjust: exact;
+  ">
+    <!-- Grid de 3 colunas: logo | título | infos -->
+    <div style="
+      display: grid;
+      grid-template-columns: 1fr auto 1fr;
+      align-items: center;
+      column-gap: 12px;
+    ">
+      <!-- Logo esquerda -->
+      <div style="justify-self: start; line-height: 0;">
+        ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Selo" style="height:28px; width:auto; display:block;" />` : ``}
       </div>
 
-      <!-- Período -->
-      <div style="margin-top:6px; padding:8px; background:#f5f5f5; border-radius:6px; font-size:10px; font-weight:700;">
-        Período: &nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;
+      <!-- Título central (+2px que antes) -->
+      <div style="justify-self: center; text-align: center; font-weight: 700; font-size: 14px; line-height: 1;">
+        Controle de Produção - Mistura/Ensaque
       </div>
 
-      <!-- Paginação movida 8px para cima -->
-      <div style="margin-top:-4px; font-size:9px; color:#666;">
-        Página <span class="pageNumber"></span> de <span class="totalPages"></span>
+      <!-- Infos direita -->
+      <div style="justify-self: end; font-size: 10px; text-align: right; line-height: 1.4;">
+        <div><span>Nº Documento: </span><strong>BPF 18</strong></div>
+        <div>Data: 03/02/2025</div>
       </div>
-    </div>`.trim();
+    </div>
+
+    <!-- Período -->
+    <div style="margin-top: 6px; padding: 8px; background: #f5f5f5; border-radius: 6px; font-size: 10px; font-weight: 700;">
+      Período: &nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;
+    </div>
+
+    <!-- Paginação posicionada ABSOLUTAMENTE no mesmo ponto em todas as páginas -->
+    <div style="
+      position: absolute;
+      left: 12mm;
+      right: 12mm;
+      bottom: 6px;         /* ajuste fino vertical (suba/baixe aqui) */
+      font-size: 9px;
+      line-height: 1;
+      color: #666;
+      text-align: left;
+    ">
+      Página <span class="pageNumber"></span> de <span class="totalPages"></span>
+    </div>
+  </div>
+`.trim();
+
 
   const footerTemplate = `
     <div style="font-size:9px; width:100%; padding:0 12mm 6px 12mm;">
