@@ -167,7 +167,7 @@ function renderHTML(params: {
 <style>
   @page { size: A4 portrait; margin: 90px 12mm 110px; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #111; }
-  .group { margin: 10px 0 12px; padding: 6px 8px; background: #eee; border-radius: 6px; }
+  .group { margin: 10px 0 12px; padding: 6px 10px; background: #eee; border-radius: 6px; }
   table { width: 100%; border-collapse: collapse; page-break-inside: auto; }
   thead { display: table-header-group; }
   tr { page-break-inside: avoid; page-break-after: auto; }
