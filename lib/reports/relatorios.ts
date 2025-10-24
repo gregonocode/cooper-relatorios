@@ -165,7 +165,8 @@ function renderHTML(params: {
 <head>
 <meta charset="utf-8"/>
 <style>
-  @page { size: A4 portrait; margin: 90px 12mm 110px; }
+  /* Let Puppeteer margins control top/bottom; avoid double margins */
+  @page { size: A4 portrait; margin: 0; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #111; }
   .group { margin: 10px 0 12px; padding: 6px 8px; background: #eee; border-radius: 6px; }
   table { width: 100%; border-collapse: collapse; page-break-inside: auto; }
@@ -524,6 +525,39 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
   const browser = await launchBrowser();
   const page = await browser.newPage();
 
+  // Prepara logo do cabeçalho como data URI (public/imagens/selo.png)
+  let __logoDataUrl = "";
+  try {
+    const pathMod = await import("path");
+    const fsProm = await import("fs/promises");
+    const logoPath = pathMod.join(process.cwd(), "public", "imagens", "selo.png");
+    const logoBuf = await fsProm.readFile(logoPath);
+    __logoDataUrl = `data:image/png;base64,${logoBuf.toString("base64")}`;
+  } catch {}
+
+  const headerTemplateNew = `
+    <div style="font-size:10px; width:100%; padding:0; position:relative;">
+      <div style="position:absolute; left:50%; transform:translateX(-50%); top:0; font-weight:700; font-size:14px; text-align:center; white-space:nowrap;">
+        Controle de Produção - Mistura/Ensaque
+      </div>
+      <img src="${__logoDataUrl}" style="position:absolute; right:0; top:0; height:20px; ${__logoDataUrl ? '' : 'display:none;'}" />
+
+      <div style="margin-top:26px; display:flex; align-items:flex-start; justify-content:space-between;">
+        <div style="font-size:10px; text-align:right; line-height:1.4; margin-left:auto;">
+          <div><span>Nº Documento: </span><strong>BPF 18</strong></div>
+          <div>Data: 03/02/2025</div>
+        </div>
+      </div>
+
+      <div style="margin-top:6px; padding:8px; background:#f5f5f5; border-radius:6px; font-size:10px; font-weight:700;">
+        Período: &nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;
+      </div>
+
+      <div style="margin-top:4px; font-size:9px; color:#666;">
+        Página <span class='pageNumber'></span> de <span class='totalPages'></span>
+      </div>
+    </div>`.trim();
+
   const headerTemplate = `
     <div style="font-size:10px; width:100%; padding:0 12mm;">
       <div style="display:flex; align-items:center; justify-content:space-between;">
@@ -542,7 +576,7 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
     </div>`.trim();
 
   const footerTemplate = `
-    <div style="font-size:9px; width:100%; padding:0 12mm 6px 12mm;">
+    <div style="font-size:9px; width:100%; padding:0 0 6px 0;">
       <table style="width:100%; border-collapse:collapse; font-size:9px;">
         <thead>
           <tr>
@@ -577,9 +611,9 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
     format: "A4",
     printBackground: true,
     displayHeaderFooter: true,
-    headerTemplate,
+    headerTemplate: headerTemplateNew,
     footerTemplate,
-    margin: { top: "110px", bottom: "110px", left: "12mm", right: "12mm" },
+    margin: { top: "130px", bottom: "110px", left: "12mm", right: "12mm" },
   });
 
   // Converte para Buffer (compatível com Node)
