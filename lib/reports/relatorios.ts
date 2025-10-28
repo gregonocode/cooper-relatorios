@@ -537,6 +537,7 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
     logoDataUrl = "";
   }
 
+  // ======= ATENÇÃO: Cabeçalho sem a paginação =======
   const headerTemplate = `
     <div style="font-size:10px; width:100%; padding:0 12mm;">
       <!-- Grid de 3 colunas: logo | título central | infos à direita -->
@@ -566,11 +567,6 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
       <!-- Período -->
       <div style="margin-top:6px; padding:8px; background:#f5f5f5; border-radius:6px; font-size:10px; font-weight:700;">
         Período: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
-      </div>
-
-      <!-- Paginação movida 8px para cima -->
-      <div style="margin-top:-4px; font-size:9px; color:#666;">
-        Página <span class="pageNumber"></span> de <span class="totalPages"></span>
       </div>
     </div>`.trim();
 
