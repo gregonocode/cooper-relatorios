@@ -167,9 +167,17 @@ function renderHTML(params: {
 <style>
   @page { size: A4 portrait; margin: 90px 12mm 110px; }
   body { font-family: Arial, Helvetica, sans-serif; font-size: 11px; color: #111; }
+
+  /* seção por lote; a partir da 2ª, forçar nova página */
+  .section { }
+  .section.break {
+    break-before: page;              /* navegadores modernos */
+    page-break-before: always;       /* fallback */
+  }
+
   .group { margin: 10px 0 12px; padding: 6px 10px; background: #eee; border-radius: 6px; }
   table { width: 100%; border-collapse: collapse; page-break-inside: auto; }
-  thead { display: table-header-group; }
+  thead { display: table-header-group; } /* garante cabeçalho em cada nova página quando tabela quebra */
   tr { page-break-inside: avoid; page-break-after: auto; }
   th, td { border: 1px solid #ddd; padding: 6px; }
   th { background: #FFF4CC; text-align: center; }
@@ -182,37 +190,40 @@ function renderHTML(params: {
 </head>
 <body>
 
-  <table>
-    <thead>
-      <tr>
-        <th>Fórmula / Matéria-Prima</th>
-        <th>Lote</th>
-        <th>Quantidade</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${grupos.map((g) => `
-        <tr><td colspan="3" class="group"><strong>Lote de Produção:</strong> ${g.loteProducao}</td></tr>
-        ${g.blocos.map((b) => `
-          <tr class="blk-title">
-            <td class="center"><strong>${b.formulaNome}</strong></td>
-            <td class="center"><strong>${b.loteProducao}</strong></td>
-            <td class="right"><strong>${b.quantidadeProduzida.toFixed(2)} btd</strong></td>
+  ${grupos.map((g, idx) => `
+    <div class="section ${idx > 0 ? "break" : ""}">
+      <table>
+        <thead>
+          <tr>
+            <th>Fórmula / Matéria-Prima</th>
+            <th>Lote</th>
+            <th>Quantidade</th>
           </tr>
-          ${b.linhas.map((ln) => `
+        </thead>
+        <tbody>
+          <tr><td colspan="3" class="group"><strong>Lote de Produção:</strong> ${g.loteProducao}</td></tr>
+          ${g.blocos.map((b) => `
+            <tr class="blk-title">
+              <td class="center"><strong>${b.formulaNome}</strong></td>
+              <td class="center"><strong>${b.loteProducao}</strong></td>
+              <td class="right"><strong>${b.quantidadeProduzida.toFixed(2)} btd</strong></td>
+            </tr>
+            ${b.linhas.map((ln) => `
+              <tr>
+                <td>${"&nbsp;&nbsp;"}${ln.materiaPrimaNome}</td>
+                <td class="center">${ln.loteUsado || "[sem lote elegível]"}</td>
+                <td class="right">${ln.quantidadeNecessaria.toFixed(2)} ${ln.unidade}</td>
+              </tr>
+            `).join("")}
             <tr>
-              <td>${"&nbsp;&nbsp;"}${ln.materiaPrimaNome}</td>
-              <td class="center">${ln.loteUsado || "[sem lote elegível]"}</td>
-              <td class="right">${ln.quantidadeNecessaria.toFixed(2)} ${ln.unidade}</td>
+              <td colspan="3" class="ensaque"><strong>Quantidade de ensaque:</strong></td>
             </tr>
           `).join("")}
-          <tr>
-            <td colspan="3" class="ensaque"><strong>Quantidade de ensaque:</strong></td>
-          </tr>
-        `).join("")}
-      `).join("")}
-    </tbody>
-  </table>
+        </tbody>
+      </table>
+    </div>
+  `).join("")}
+
 </body>
 </html>`.trim();
 }
