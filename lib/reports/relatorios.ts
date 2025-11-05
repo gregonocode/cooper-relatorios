@@ -67,8 +67,6 @@ function startOfDay(d: Date) {
 }
 
 /* ========== Launch Chromium (dual-path) ========== */
-/* ========== Launch Chromium (dual-path) ========== */
-
 // NOVO: permite forçar via env se precisar
 function isProdRuntime() {
   if (process.env.CHROMIUM_FORCE_PROD === "1") return true;
@@ -76,7 +74,7 @@ function isProdRuntime() {
   if (process.env.NEXT_RUNTIME === "nodejs") return true;
   if (process.env.AWS_REGION || process.env.LAMBDA_TASK_ROOT) return true;
   if (process.env.VERCEL) return true; // any truthy value indicates Vercel
-  // Default to prod when NODE_ENV=production (safer on deployments)
+  // Default to prod quando NODE_ENV=production (mais seguro em deploy)
   if (process.env.NODE_ENV === "production") return true;
   return false;
 }
@@ -171,13 +169,13 @@ function renderHTML(params: {
   /* seção por lote; a partir da 2ª, forçar nova página */
   .section { }
   .section.break {
-    break-before: page;              /* navegadores modernos */
-    page-break-before: always;       /* fallback */
+    break-before: page;
+    page-break-before: always;
   }
 
   .group { margin: 10px 0 12px; padding: 6px 10px; background: #eee; border-radius: 6px; }
   table { width: 100%; border-collapse: collapse; page-break-inside: auto; }
-  thead { display: table-header-group; } /* garante cabeçalho em cada nova página quando tabela quebra */
+  thead { display: table-header-group; }
   tr { page-break-inside: avoid; page-break-after: auto; }
   th, td { border: 1px solid #ddd; padding: 6px; }
   th { background: #FFF4CC; text-align: center; }
@@ -377,8 +375,8 @@ export function normalizarDadosCarregados(raw: {
 }
 
 /* ========== Reconstrução FIFO por lote (sem producao_consumos) ========== */
-
 /** Distribui todo o consumo histórico por FIFO de lotes.
+ *  Regra essencial: cada produção SÓ pode consumir lotes cujo data_recebimento <= data_producao.
  *  Retorna: Map<producaoId, Map<materiaPrimaId, string[]>> (números de lote usados por MP em cada produção)
  */
 function reconstruirConsumoPorLotesFIFO(params: {
@@ -402,6 +400,7 @@ function reconstruirConsumoPorLotesFIFO(params: {
     filasPorMP.set(l.materiaPrimaId, arr);
   }
 
+  // FIFO por data_recebimento (mais antigo primeiro)
   for (const arr of filasPorMP.values()) {
     arr.sort((a, b) => a.data.getTime() - b.data.getTime());
   }
@@ -416,6 +415,7 @@ function reconstruirConsumoPorLotesFIFO(params: {
 
   for (const p of producoesOrdenadas) {
     const usadosNaProducao = new Map<number, string[]>();
+    const dataProdTs = new Date(p.dataProducao).getTime();
 
     for (const [mpIdStr, qtdTotal] of Object.entries(p.materiaPrimaConsumida)) {
       const mpId = Number(mpIdStr);
@@ -427,6 +427,9 @@ function reconstruirConsumoPorLotesFIFO(params: {
         if (restante <= 0) break;
         if (item.saldo <= 0) continue;
 
+        // BLOQUEIA consumo de lote "do futuro"
+        if (item.data.getTime() > dataProdTs) continue;
+
         const consumir = Math.min(item.saldo, restante);
         if (consumir > 0) {
           item.saldo -= consumir;
@@ -435,11 +438,10 @@ function reconstruirConsumoPorLotesFIFO(params: {
         }
       }
 
-      if (usados.length === 0) {
-        usadosNaProducao.set(mpId, ["[sem lote elegível]"]);
-      } else {
-        usadosNaProducao.set(mpId, usados);
-      }
+      usadosNaProducao.set(
+        mpId,
+        usados.length > 0 ? usados : ["[sem lote elegível]"]
+      );
     }
 
     lotesUsadosPorProducao.set(p.id, usadosNaProducao);
