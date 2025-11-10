@@ -379,43 +379,43 @@ export function normalizarDadosCarregados(raw: {
  *  Regra essencial: cada produção SÓ pode consumir lotes cujo data_recebimento <= data_producao.
  *  Retorna: Map<producaoId, Map<materiaPrimaId, string[]>> (números de lote usados por MP em cada produção)
  */
+/* ========== Reconstrução FIFO por lote (com fallback se houver estoque geral) ========== */
+/** 
+ * Distribui o consumo histórico por FIFO de lotes.
+ *
+ * Regras:
+ * 1) Primeiro tenta usar apenas lotes com data_recebimento <= data_producao (FIFO "correto").
+ * 2) Se não conseguir usar NENHUM lote (ou seja, daria "[sem lote elegível]"),
+ *    faz fallback: usa qualquer lote com saldo (ignorando data), ainda em FIFO.
+ * 3) Só retorna "[sem lote elegível]" se não houver saldo em lote nenhum para aquela MP.
+ *
+ * Retorna: Map<producaoId, Map<materiaPrimaId, string[]>> com os números de lote usados.
+ */
 function reconstruirConsumoPorLotesFIFO(params: {
   producoes: Producao[];
   lotes: Lote[];
 }): Map<number, Map<number, string[]>> {
   const { producoes, lotes } = params;
 
-  type FilaItem = { loteId: number; numero: string; data: Date; saldo: number };
+  type FilaItem = { numero: string; data: Date; saldo: number };
 
-  // Agrupa lotes por MP e ordena por data_recebimento (FIFO)
-  const estadoPorMP = new Map<
-    number,
-    {
-      todos: FilaItem[];   // todos os lotes dessa MP
-      idxLibera: number;   // próximo lote a ser "liberado" pelo tempo
-      ativos: FilaItem[];  // lotes já elegíveis (data_recebimento <= produção) com saldo
-    }
-  >();
+  // Fila FIFO por matéria-prima (ordenada por data_recebimento)
+  const filasPorMP = new Map<number, FilaItem[]>();
 
   for (const l of lotes) {
     const mpId = l.materiaPrimaId;
-    const st =
-      estadoPorMP.get(mpId) ??
-      { todos: [] as FilaItem[], idxLibera: 0, ativos: [] as FilaItem[] };
-
-    st.todos.push({
-      loteId: l.id,
+    const arr = filasPorMP.get(mpId) ?? [];
+    arr.push({
       numero: l.numeroLote,
       data: new Date(l.dataRecebimento),
       saldo: l.quantidadeRecebida,
     });
-
-    estadoPorMP.set(mpId, st);
+    filasPorMP.set(mpId, arr);
   }
 
-  // Ordena os lotes de cada MP por data (FIFO cronológico)
-  for (const st of estadoPorMP.values()) {
-    st.todos.sort((a, b) => a.data.getTime() - b.data.getTime());
+  // Ordena cada fila por data (FIFO)
+  for (const arr of filasPorMP.values()) {
+    arr.sort((a, b) => a.data.getTime() - b.data.getTime());
   }
 
   // Produções em ordem cronológica
@@ -432,30 +432,18 @@ function reconstruirConsumoPorLotesFIFO(params: {
     for (const [mpIdStr, qtdTotal] of Object.entries(p.materiaPrimaConsumida)) {
       const mpId = Number(mpIdStr);
       let restante = Number(qtdTotal);
-      const st = estadoPorMP.get(mpId);
+      const fila = filasPorMP.get(mpId);
 
-      if (!st || restante <= 0) {
+      if (!fila || restante <= 0) {
         usadosNaProducao.set(mpId, ["[sem lote elegível]"]);
         continue;
       }
 
-      // Libera lotes cuja data_recebimento <= dataProducao
-      while (
-        st.idxLibera < st.todos.length &&
-        st.todos[st.idxLibera].data.getTime() <= dataProd.getTime()
-      ) {
-        const lote = st.todos[st.idxLibera];
-        // só entra nos ativos se tiver saldo
-        if (lote.saldo > 0) {
-          st.ativos.push({ ...lote });
-        }
-        st.idxLibera++;
-      }
-
       const usados: string[] = [];
 
-      // Consome apenas dos ativos elegíveis (data <= produção) em ordem FIFO
-      for (const item of st.ativos) {
+      // 1) Tenta consumir somente de lotes com data_recebimento <= dataProducao
+      for (const item of fila) {
+        if (item.data.getTime() > dataProd.getTime()) continue;
         if (restante <= 0) break;
         if (item.saldo <= 0) continue;
 
@@ -469,10 +457,27 @@ function reconstruirConsumoPorLotesFIFO(params: {
         }
       }
 
-      // Remove lotes zerados da fila ativa
-      st.ativos = st.ativos.filter((it) => it.saldo > 0);
+      // 2) Fallback: se não conseguimos usar NENHUM lote "válido no tempo",
+      //    mas ainda há consumo pendente, tentamos em QUALQUER lote com saldo (ignorando data)
+      if (usados.length === 0 && restante > 0) {
+        for (const item of fila) {
+          if (restante <= 0) break;
+          if (item.saldo <= 0) continue;
 
+          const consumir = Math.min(item.saldo, restante);
+          if (consumir > 0) {
+            item.saldo -= consumir;
+            restante -= consumir;
+            if (!usados.includes(item.numero)) {
+              usados.push(item.numero);
+            }
+          }
+        }
+      }
+
+      // 3) Decide o que registrar no relatório
       if (usados.length === 0) {
+        // não tinha saldo em lote nenhum dessa MP
         usadosNaProducao.set(mpId, ["[sem lote elegível]"]);
       } else {
         usadosNaProducao.set(mpId, usados);
