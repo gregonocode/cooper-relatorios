@@ -385,63 +385,98 @@ function reconstruirConsumoPorLotesFIFO(params: {
 }): Map<number, Map<number, string[]>> {
   const { producoes, lotes } = params;
 
-  // 1) Preparar filas FIFO por MP (saldo = quantidadeRecebida)
   type FilaItem = { loteId: number; numero: string; data: Date; saldo: number };
-  const filasPorMP = new Map<number, FilaItem[]>();
+
+  // Agrupa lotes por MP e ordena por data_recebimento (FIFO)
+  const estadoPorMP = new Map<
+    number,
+    {
+      todos: FilaItem[];   // todos os lotes dessa MP
+      idxLibera: number;   // próximo lote a ser "liberado" pelo tempo
+      ativos: FilaItem[];  // lotes já elegíveis (data_recebimento <= produção) com saldo
+    }
+  >();
 
   for (const l of lotes) {
-    const arr = filasPorMP.get(l.materiaPrimaId) ?? [];
-    arr.push({
+    const mpId = l.materiaPrimaId;
+    const st =
+      estadoPorMP.get(mpId) ??
+      { todos: [] as FilaItem[], idxLibera: 0, ativos: [] as FilaItem[] };
+
+    st.todos.push({
       loteId: l.id,
       numero: l.numeroLote,
       data: new Date(l.dataRecebimento),
       saldo: l.quantidadeRecebida,
     });
-    filasPorMP.set(l.materiaPrimaId, arr);
+
+    estadoPorMP.set(mpId, st);
   }
 
-  // FIFO por data_recebimento (mais antigo primeiro)
-  for (const arr of filasPorMP.values()) {
-    arr.sort((a, b) => a.data.getTime() - b.data.getTime());
+  // Ordena os lotes de cada MP por data (FIFO cronológico)
+  for (const st of estadoPorMP.values()) {
+    st.todos.sort((a, b) => a.data.getTime() - b.data.getTime());
   }
 
-  // 2) Produções em ordem cronológica
+  // Produções em ordem cronológica
   const producoesOrdenadas = [...producoes].sort(
     (a, b) => new Date(a.dataProducao).getTime() - new Date(b.dataProducao).getTime()
   );
 
-  // 3) Resultado
   const lotesUsadosPorProducao = new Map<number, Map<number, string[]>>();
 
   for (const p of producoesOrdenadas) {
     const usadosNaProducao = new Map<number, string[]>();
-    const dataProdTs = new Date(p.dataProducao).getTime();
+    const dataProd = new Date(p.dataProducao);
 
     for (const [mpIdStr, qtdTotal] of Object.entries(p.materiaPrimaConsumida)) {
       const mpId = Number(mpIdStr);
       let restante = Number(qtdTotal);
-      const fila = filasPorMP.get(mpId) ?? [];
+      const st = estadoPorMP.get(mpId);
+
+      if (!st || restante <= 0) {
+        usadosNaProducao.set(mpId, ["[sem lote elegível]"]);
+        continue;
+      }
+
+      // Libera lotes cuja data_recebimento <= dataProducao
+      while (
+        st.idxLibera < st.todos.length &&
+        st.todos[st.idxLibera].data.getTime() <= dataProd.getTime()
+      ) {
+        const lote = st.todos[st.idxLibera];
+        // só entra nos ativos se tiver saldo
+        if (lote.saldo > 0) {
+          st.ativos.push({ ...lote });
+        }
+        st.idxLibera++;
+      }
+
       const usados: string[] = [];
 
-      for (const item of fila) {
+      // Consome apenas dos ativos elegíveis (data <= produção) em ordem FIFO
+      for (const item of st.ativos) {
         if (restante <= 0) break;
         if (item.saldo <= 0) continue;
-
-        // BLOQUEIA consumo de lote "do futuro"
-        if (item.data.getTime() > dataProdTs) continue;
 
         const consumir = Math.min(item.saldo, restante);
         if (consumir > 0) {
           item.saldo -= consumir;
           restante -= consumir;
-          if (!usados.includes(item.numero)) usados.push(item.numero);
+          if (!usados.includes(item.numero)) {
+            usados.push(item.numero);
+          }
         }
       }
 
-      usadosNaProducao.set(
-        mpId,
-        usados.length > 0 ? usados : ["[sem lote elegível]"]
-      );
+      // Remove lotes zerados da fila ativa
+      st.ativos = st.ativos.filter((it) => it.saldo > 0);
+
+      if (usados.length === 0) {
+        usadosNaProducao.set(mpId, ["[sem lote elegível]"]);
+      } else {
+        usadosNaProducao.set(mpId, usados);
+      }
     }
 
     lotesUsadosPorProducao.set(p.id, usadosNaProducao);
@@ -449,6 +484,7 @@ function reconstruirConsumoPorLotesFIFO(params: {
 
   return lotesUsadosPorProducao;
 }
+
 
 /* ========== Geração de PDF principal ========== */
 export async function gerarRelatorioPersonalizadoPDF(opts: {
