@@ -527,6 +527,8 @@ function reconstruirConsumoPorLotesFIFO(params: {
 
 
 /* ========== Geração de PDF principal ========== */
+const SHOW_ZERO_LINES = true;            // exibir MPs com quantidade 0 (apenas na fórmula)
+const LABEL_ZERO = '[não consumido]';    // rótulo p/ linha de quantidade 0
 export async function gerarRelatorioPersonalizadoPDF(opts: {
   from: string;                // "YYYY-MM-DD"
   to: string;                  // "YYYY-MM-DD"
@@ -583,25 +585,39 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
     const blocos = prods.map((p) => {
       const formulaNome = formulaById.get(p.formulaId)?.nome ?? `Fórmula ${p.formulaId}`;
 
-      const linhas = Object.entries(p.materiaPrimaConsumida).map(([mpIdStr, qtd]) => {
-        const mpId = Number(mpIdStr);
-        const mp = mpById.get(mpId);
+      const formula = formulaById.get(p.formulaId);
+      const consumoEntries = Object.entries(p.materiaPrimaConsumida || {});
+      const mpIdsFromConsumo = new Set(consumoEntries.map(([k]) => Number(k)));
+      const mpIdsFromFormula = new Set<number>(
+        (formula?.componentes || [])
+          .map((c) => Number(c.materia_prima_id))
+          .filter((x) => Number.isFinite(x))
+      );
+      const allMpIds = new Set<number>([...mpIdsFromFormula, ...mpIdsFromConsumo]);
+      const usadosDaProducaoFIFO = lotesUsados.get(p.id) ?? new Map<number, string[]>();
+      const byMpReal = consumosIndex.get(p.id) ?? new Map<number, string[]>();
 
-        // Preferir rastreio REAL (producao_consumos) e cair no FIFO como fallback
-        const usadosDaProducao = lotesUsados.get(p.id) ?? new Map<number, string[]>();
-        const preferenciaReal = consumosIndex.get(p.id)?.get(mpId);
-        const lotesLista =
-          (preferenciaReal && preferenciaReal.length > 0)
-            ? preferenciaReal
-            : (usadosDaProducao.get(mpId) ?? ["[sem lote elegível]"]);
+      const linhas = [...allMpIds]
+        .map((mpId) => {
+          const mp = mpById.get(mpId);
+          const qtd = Number(p.materiaPrimaConsumida?.[mpId as unknown as string] ?? 0);
 
-        return {
-          materiaPrimaNome: mp?.nome ?? `MP ${mpId}`,
-          unidade: mp?.unidadeMedida ?? "",
-          loteUsado: lotesLista.join("/"),
-          quantidadeNecessaria: Number(qtd),
-        };
-      });
+          const real = byMpReal.get(mpId);
+          const fifo = usadosDaProducaoFIFO.get(mpId);
+          const lotesLista =
+            (real && real.length > 0) ? real :
+            (qtd > 0 && fifo && fifo.length > 0) ? fifo :
+            [];
+
+          return {
+            materiaPrimaNome: mp?.nome ?? `MP ${mpId}`,
+            unidade: mp?.unidadeMedida ?? "",
+            loteUsado: lotesLista.length ? lotesLista.join("/") : (qtd > 0 ? "[sem lote elegível]" : LABEL_ZERO),
+            quantidadeNecessaria: qtd,
+          };
+        })
+        .filter((ln) => SHOW_ZERO_LINES ? true : ln.quantidadeNecessaria > 0)
+        .sort((a, b) => a.materiaPrimaNome.localeCompare(b.materiaPrimaNome));
 
       return {
         formulaNome,
@@ -713,6 +729,7 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
 
   return { ok: true as const, buffer: pdfBuffer };
 }
+
 
 
 
