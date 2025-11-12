@@ -1,4 +1,5 @@
 // lib/reports/relatorios.ts
+
 import chromium from "@sparticuz/chromium";
 import puppeteer from "puppeteer-core";
 import { createClient, SupabaseClient } from "@supabase/supabase-js";
@@ -47,6 +48,16 @@ export type Lote = {
   quantidadeAtual: number;    // lotes.quantidade_atual     (apenas referência)
   dataRecebimento: string;    // lotes.data_recebimento (ISO)
 };
+
+// 🔹 NOVO: tipos para rastreio real
+type RowProducaoConsumo = {
+  producao_id: number | string;
+  materia_prima_id: number | string;
+  lote_numero: string | null;
+  quantidade?: number | string | null;
+};
+// Índice: produção → mp → [lotes]
+type ConsumosIndex = Map<number, Map<number, string[]>>;
 
 /* =============== Utils =============== */
 function safeParseJson<T>(value: unknown, fallback: T): T {
@@ -281,7 +292,6 @@ export async function carregarDadosDoBanco(
   let producoesQuery = supabase
     .from("producoes")
     .select("id, user_id, formula_id, quantidade_produzida, data_producao, created_at, lote_producao, materia_prima_consumida")
-    // .gte("data_producao", from) // <- NÃO filtra por 'from' aqui!
     .lt("data_producao", toEndExclusiveISO)
     .order("data_producao", { ascending: true });
 
@@ -297,6 +307,11 @@ export async function carregarDadosDoBanco(
     .from("formulas")
     .select("id, user_id, nome, componentes, created_at");
 
+  // 🔹 NOVO: rastreio real (sem depender de user_id aqui)
+  const consumosQuery = supabase
+    .from("producao_consumos")
+    .select("producao_id, materia_prima_id, lote_numero, quantidade");
+
   if (userId) {
     producoesQuery = producoesQuery.eq("user_id", userId);
     materiasQuery = materiasQuery.eq("user_id", userId);
@@ -309,19 +324,25 @@ export async function carregarDadosDoBanco(
     { data: materias, error: e2 },
     { data: lotes, error: e3 },
     { data: formulas, error: e4 },
-  ] = await Promise.all([producoesQuery, materiasQuery, lotesQuery, formulasQuery]);
+    { data: consumos, error: e5 },
+  ] = await Promise.all([producoesQuery, materiasQuery, lotesQuery, formulasQuery, consumosQuery]);
 
-  if (e1 || e2 || e3 || e4) {
+  if (e1 || e2 || e3 || e4 || e5) {
     throw new Error(
-      `Erro ao buscar dados: ${e1?.message ?? ""} ${e2?.message ?? ""} ${e3?.message ?? ""} ${e4?.message ?? ""}`.trim()
+      `Erro ao buscar dados: ${e1?.message ?? ""} ${e2?.message ?? ""} ${e3?.message ?? ""} ${e4?.message ?? ""} ${e5?.message ?? ""}`.trim()
     );
   }
+
+  // 🔹 se veio userId, filtramos consumos pelos IDs de produções filtradas
+  const producoesIdsSet = new Set((producoes ?? []).map(p => Number(p.id)));
+  const consumosFiltrados = (consumos ?? []).filter(c => producoesIdsSet.has(Number(c.producao_id)));
 
   return {
     producoes: (producoes ?? []) as RowProducao[],
     materias: (materias ?? []) as RowMateriaPrima[],
     lotes: (lotes ?? []) as RowLote[],
     formulas: (formulas ?? []) as RowFormula[],
+    consumos: consumosFiltrados as RowProducaoConsumo[], // 🔹 NOVO
   };
 }
 
@@ -330,6 +351,7 @@ export function normalizarDadosCarregados(raw: {
   producoes: RowProducao[];
   lotes: RowLote[];
   formulas: RowFormula[];
+  consumos: RowProducaoConsumo[]; // 🔹 NOVO
 }) {
   const mpById = new Map<number, MateriaPrima>(
     raw.materias.map((m) => [
@@ -366,30 +388,38 @@ export function normalizarDadosCarregados(raw: {
     id: Number(l.id),
     materiaPrimaId: Number(l.materia_prima_id),
     numeroLote: String(l.numero_lote ?? ""),
-    quantidadeRecebida: Number(l.quantidade_recebida ?? 0), // <- usamos RECEBIDA
+    quantidadeRecebida: Number(l.quantidade_recebida ?? 0),
     quantidadeAtual: Number(l.quantidade_atual ?? 0),
     dataRecebimento: String(l.data_recebimento),
   }));
 
-  return { mpById, formulaById, producoesNorm, lotesNorm };
+  // 🔹 NOVO: índice de consumos reais
+  const consumosIndex: ConsumosIndex = new Map();
+  for (const c of raw.consumos) {
+    const pid = Number(c.producao_id);
+    const mp  = Number(c.materia_prima_id);
+    const lote = String(c.lote_numero ?? "");
+
+    if (!consumosIndex.has(pid)) consumosIndex.set(pid, new Map());
+    const byMp = consumosIndex.get(pid)!;
+    if (!byMp.has(mp)) byMp.set(mp, []);
+    const arr = byMp.get(mp)!;
+
+    if (lote && !arr.includes(lote)) {
+      arr.push(lote); // mantém ordem de inserção
+    }
+  }
+
+  return { mpById, formulaById, producoesNorm, lotesNorm, consumosIndex };
 }
 
-/* ========== Reconstrução FIFO por lote (sem producao_consumos) ========== */
-/** Distribui todo o consumo histórico por FIFO de lotes.
- *  Regra essencial: cada produção SÓ pode consumir lotes cujo data_recebimento <= data_producao.
- *  Retorna: Map<producaoId, Map<materiaPrimaId, string[]>> (números de lote usados por MP em cada produção)
- */
-/* ========== Reconstrução FIFO por lote (com fallback se houver estoque geral) ========== */
-/** 
- * Distribui o consumo histórico por FIFO de lotes.
- *
+/* ========== Reconstrução FIFO por lote (com fallback) ========== */
+/**
  * Regras:
  * 1) Primeiro tenta usar apenas lotes com data_recebimento <= data_producao (FIFO "correto").
  * 2) Se não conseguir usar NENHUM lote (ou seja, daria "[sem lote elegível]"),
  *    faz fallback: usa qualquer lote com saldo (ignorando data), ainda em FIFO.
  * 3) Só retorna "[sem lote elegível]" se não houver saldo em lote nenhum para aquela MP.
- *
- * Retorna: Map<producaoId, Map<materiaPrimaId, string[]>> com os números de lote usados.
  */
 function reconstruirConsumoPorLotesFIFO(params: {
   producoes: Producao[];
@@ -512,10 +542,10 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
   // 2) Buscar dados reais
   const raw = await carregarDadosDoBanco(supabase, from, to, userId);
 
-  // 3) Normalizar
-  const { mpById, formulaById, producoesNorm, lotesNorm } = normalizarDadosCarregados(raw);
+  // 3) Normalizar (agora com consumosIndex)
+  const { mpById, formulaById, producoesNorm, lotesNorm, consumosIndex } = normalizarDadosCarregados(raw);
 
-  // 4) Reconstruir consumo real por lote (FIFO) p/ TODA a história até 'to'
+  // 4) Reconstruir consumo por lote (FIFO) p/ TODA a história até 'to'
   const lotesUsados = reconstruirConsumoPorLotesFIFO({
     producoes: producoesNorm,
     lotes: lotesNorm,
@@ -543,16 +573,20 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
     return cmp !== 0 ? cmp : loteA.localeCompare(loteB);
   });
 
-  // 6) Montar estrutura para HTML usando a simulação de lotes
+  // 6) Montar estrutura para HTML usando rastreio real com fallback FIFO
   const gruposForHTML = gruposOrdenados.map(([loteProducao, prods]) => {
     const blocos = prods.map((p) => {
       const formulaNome = formulaById.get(p.formulaId)?.nome ?? `Fórmula ${p.formulaId}`;
-      const usadosDaProducao = lotesUsados.get(p.id) ?? new Map<number, string[]>();
 
       const linhas = Object.entries(p.materiaPrimaConsumida).map(([mpIdStr, qtd]) => {
         const mpId = Number(mpIdStr);
         const mp = mpById.get(mpId);
-        const lotesLista = usadosDaProducao.get(mpId) ?? ["[sem lote elegível]"];
+
+        // 🔹 Prioriza rastreio REAL; cai pro FIFO se não houver
+        const rastreados = consumosIndex.get(p.id)?.get(mpId);
+        const fallbackFIFO = reconstruirGet(lotesUsados, p.id, mpId);
+        const lotesLista = (rastreados && rastreados.length > 0) ? rastreados : (fallbackFIFO ?? ["[sem lote elegível]"]);
+
         return {
           materiaPrimaNome: mp?.nome ?? `MP ${mpId}`,
           unidade: mp?.unidadeMedida ?? "",
@@ -591,34 +625,21 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
     logoDataUrl = "";
   }
 
-  // ======= ATENÇÃO: Cabeçalho sem a paginação =======
+  // ======= Cabeçalho e rodapé =======
   const headerTemplate = `
     <div style="font-size:10px; width:100%; padding:0 12mm;">
-      <!-- Grid de 3 colunas: logo | título central | infos à direita -->
-      <div style="
-        display:grid;
-        grid-template-columns: 1fr auto 1fr;
-        align-items:center;
-        column-gap:12px;
-      ">
-        <!-- Coluna esquerda: logo -->
+      <div style="display:grid; grid-template-columns: 1fr auto 1fr; align-items:center; column-gap:12px;">
         <div style="justify-self:start;">
           ${logoDataUrl ? `<img src="${logoDataUrl}" alt="Selo" style="height:28px; width:auto; display:block;" />` : ``}
         </div>
-
-        <!-- Coluna central: título CENTRALIZADO e +2px -->
         <div style="justify-self:center; text-align:center; font-weight:700; font-size:14px;">
           Controle de Produção - Mistura/Ensaque
         </div>
-
-        <!-- Coluna direita: infos do documento -->
         <div style="justify-self:end; font-size:10px; text-align:right; line-height:1.4;">
           <div><span>Nº Documento: </span><strong>BPF 18</strong></div>
           <div>Data: 03/02/2025</div>
         </div>
       </div>
-
-      <!-- Período -->
       <div style="margin-top:6px; padding:8px; background:#f5f5f5; border-radius:6px; font-size:10px; font-weight:700;">
         Período: &nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;/&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;
       </div>
@@ -665,7 +686,6 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
     margin: { top: "110px", bottom: "110px", left: "12mm", right: "12mm" },
   });
 
-  // Converte para Buffer (compatível com Node)
   const pdfBuffer = Buffer.from(pdfUint8);
 
   // 8) Salvar no Storage (opcional)
@@ -684,4 +704,15 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
   }
 
   return { ok: true as const, buffer: pdfBuffer };
+}
+
+/* ===== helper interno para pegar do Map sem ?. encadear muito ===== */
+function reconstruirGet(
+  lotesUsados: Map<number, Map<number, string[]>>,
+  producaoId: number,
+  mpId: number
+): string[] | undefined {
+  const byProd = lotesUsados.get(producaoId);
+  if (!byProd) return undefined;
+  return byProd.get(mpId);
 }
