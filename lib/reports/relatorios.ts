@@ -60,7 +60,7 @@ type RowProducaoConsumo = {
 };
 
 // Índice: producao_id -> mp_id -> [numero_lote]
-type ConsumosIndex = Map<number, Map<number, string[]>>;
+type ConsumosIndex = Map<number, Map<number, { lotes: string[]; total: number }>>;
 
 /* =============== Utils =============== */
 function safeParseJson<T>(value: unknown, fallback: T): T {
@@ -404,18 +404,22 @@ export function normalizarDadosCarregados(raw: {
 
   // 🔹 NOVO: índice de consumos reais
   const consumosIndex: ConsumosIndex = new Map();
-for (const c of raw.consumos) {
-  const pid = Number(c.producao_id);
-  const mp  = Number(c.materia_prima_id);
-  const loteId = c.lote_id != null ? Number(c.lote_id) : null;
-  const numero = loteId != null ? (lotesById.get(loteId) ?? "") : "";
-  if (!consumosIndex.has(pid)) consumosIndex.set(pid, new Map());
-  const byMp = consumosIndex.get(pid)!;
-  if (!byMp.has(mp)) byMp.set(mp, []);
-  const arr = byMp.get(mp)!;
-  if (numero && !arr.includes(numero)) arr.push(numero);
-}
-return { mpById, formulaById, producoesNorm, lotesNorm, consumosIndex };
+  for (const c of raw.consumos) {
+    const pid = Number(c.producao_id);
+    const mp = Number(c.materia_prima_id);
+    const loteId = c.lote_id != null ? Number(c.lote_id) : null;
+    const numero = loteId != null ? (lotesById.get(loteId) ?? "") : "";
+
+    if (!consumosIndex.has(pid)) consumosIndex.set(pid, new Map());
+    const byMp = consumosIndex.get(pid)!;
+    if (!byMp.has(mp)) byMp.set(mp, { lotes: [], total: 0 });
+    const entry = byMp.get(mp)!;
+
+    const q = Number(c.quantidade ?? 0);
+    if (!Number.isNaN(q)) entry.total += q;
+    if (numero && !entry.lotes.includes(numero)) entry.lotes.push(numero);
+  }
+  return { mpById, formulaById, producoesNorm, lotesNorm, consumosIndex };
 }
 
 /* ========== Reconstrução FIFO por lote (com fallback) ========== */
@@ -600,10 +604,11 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
         .map((c) => normalizeMpId(getComponentMpIdRaw(c)))
         .filter((n): n is number => n !== null);
 
-      const consumedIds = Object.keys(p.materiaPrimaConsumida || {}).map((k) => Number(k)).filter((n) => Number.isFinite(n));
-      const allMpIdsSet = new Set<number>([...compIds, ...consumedIds]);
-      const allMpIds = Array.from(allMpIdsSet);
-      // opcional: ordena por id para consistência visual
+      const consumedIds = Object.keys(p.materiaPrimaConsumida || {})
+        .map((k) => Number(k))
+        .filter((n) => Number.isFinite(n));
+      const realKeys = Array.from(consumosIndex.get(p.id)?.keys() ?? []);
+      const allMpIds = Array.from(new Set<number>([...compIds, ...consumedIds, ...realKeys]));
       allMpIds.sort((a, b) => a - b);
 
       const usadosDaProducaoFIFO = lotesUsados.get(p.id) ?? new Map<number, string[]>();
@@ -611,25 +616,24 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
       const linhas = allMpIds
         .map((mpId) => {
           const mp = mpById.get(mpId);
-          const qtd = Number(p.materiaPrimaConsumida?.[String(mpId)] ?? 0);
+          const real = consumosIndex.get(p.id)?.get(mpId) ?? null;
+          const qtdJson = Number(p.materiaPrimaConsumida?.[String(mpId)] ?? 0);
+          const qtdFinal = (real?.total ?? qtdJson ?? 0);
 
-          // Preferir rastreio REAL (producao_consumos) e cair no FIFO como fallback
-          const preferenciaReal = consumosIndex.get(p.id)?.get(mpId);
-          const lotesLista = qtd > 0
-            ? (preferenciaReal && preferenciaReal.length > 0
-                ? preferenciaReal
-                : (usadosDaProducaoFIFO.get(mpId) ?? []))
-            : [];
+          const fifo = usadosDaProducaoFIFO.get(mpId) ?? ["[sem lote elegível]"];
+          const lotesPrefer = real?.lotes ?? [];
+          const lotesLista = (lotesPrefer.length > 0) ? lotesPrefer : fifo;
 
-          const loteUsadoStr = lotesLista.length > 0 ? lotesLista.join("/") : "[não consumido]";
+          let loteUsadoStr = lotesLista.length ? lotesLista.join("/") : "[sem lote elegível]";
+          if (qtdFinal === 0) loteUsadoStr = "[não consumido]";
 
-          if (!SHOW_ZERO_LINES && qtd === 0) return null;
+          if (!SHOW_ZERO_LINES && qtdFinal === 0) return null;
 
           return {
             materiaPrimaNome: mp?.nome ?? `MP ${mpId}`,
             unidade: mp?.unidadeMedida ?? "",
             loteUsado: loteUsadoStr,
-            quantidadeNecessaria: qtd,
+            quantidadeNecessaria: qtdFinal,
           };
         })
         .filter(Boolean) as Array<{
