@@ -1,4 +1,4 @@
-// lib/reports/relatorios.ts
+﻿// lib/reports/relatorios.ts
 
 import chromium from "@sparticuz/chromium";
 import puppeteer from "puppeteer-core";
@@ -49,14 +49,17 @@ export type Lote = {
   dataRecebimento: string;    // lotes.data_recebimento (ISO)
 };
 
-// 🔹 NOVO: tipos para rastreio real
+// NOVO: tipo para rastreio real (producao_consumos)
 type RowProducaoConsumo = {
+  id: number | string;
   producao_id: number | string;
   materia_prima_id: number | string;
-  lote_numero: string | null;
+  lote_id: number | string | null;
   quantidade?: number | string | null;
+  created_at?: string | null;
 };
-// Índice: produção → mp → [lotes]
+
+// Índice: producao_id -> mp_id -> [numero_lote]
 type ConsumosIndex = Map<number, Map<number, string[]>>;
 
 /* =============== Utils =============== */
@@ -310,7 +313,7 @@ export async function carregarDadosDoBanco(
   // 🔹 NOVO: rastreio real (sem depender de user_id aqui)
   const consumosQuery = supabase
     .from("producao_consumos")
-    .select("producao_id, materia_prima_id, lote_numero, quantidade");
+    .select("id, producao_id, materia_prima_id, lote_id, quantidade, created_at");
 
   if (userId) {
     producoesQuery = producoesQuery.eq("user_id", userId);
@@ -392,25 +395,27 @@ export function normalizarDadosCarregados(raw: {
     quantidadeAtual: Number(l.quantidade_atual ?? 0),
     dataRecebimento: String(l.data_recebimento),
   }));
+  // Mapa: lote_id -> numero_lote
+  const lotesById = new Map<number, string>();
+  for (const l of lotesNorm) {
+    lotesById.set(l.id, l.numeroLote);
+  }
+
 
   // 🔹 NOVO: índice de consumos reais
   const consumosIndex: ConsumosIndex = new Map();
-  for (const c of raw.consumos) {
-    const pid = Number(c.producao_id);
-    const mp  = Number(c.materia_prima_id);
-    const lote = String(c.lote_numero ?? "");
-
-    if (!consumosIndex.has(pid)) consumosIndex.set(pid, new Map());
-    const byMp = consumosIndex.get(pid)!;
-    if (!byMp.has(mp)) byMp.set(mp, []);
-    const arr = byMp.get(mp)!;
-
-    if (lote && !arr.includes(lote)) {
-      arr.push(lote); // mantém ordem de inserção
-    }
-  }
-
-  return { mpById, formulaById, producoesNorm, lotesNorm, consumosIndex };
+for (const c of raw.consumos) {
+  const pid = Number(c.producao_id);
+  const mp  = Number(c.materia_prima_id);
+  const loteId = c.lote_id != null ? Number(c.lote_id) : null;
+  const numero = loteId != null ? (lotesById.get(loteId) ?? "") : "";
+  if (!consumosIndex.has(pid)) consumosIndex.set(pid, new Map());
+  const byMp = consumosIndex.get(pid)!;
+  if (!byMp.has(mp)) byMp.set(mp, []);
+  const arr = byMp.get(mp)!;
+  if (numero && !arr.includes(numero)) arr.push(numero);
+}
+return { mpById, formulaById, producoesNorm, lotesNorm, consumosIndex };
 }
 
 /* ========== Reconstrução FIFO por lote (com fallback) ========== */
@@ -582,10 +587,13 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
         const mpId = Number(mpIdStr);
         const mp = mpById.get(mpId);
 
-        // 🔹 Prioriza rastreio REAL; cai pro FIFO se não houver
-        const rastreados = consumosIndex.get(p.id)?.get(mpId);
-        const fallbackFIFO = reconstruirGet(lotesUsados, p.id, mpId);
-        const lotesLista = (rastreados && rastreados.length > 0) ? rastreados : (fallbackFIFO ?? ["[sem lote elegível]"]);
+        // Preferir rastreio REAL (producao_consumos) e cair no FIFO como fallback
+        const usadosDaProducao = lotesUsados.get(p.id) ?? new Map<number, string[]>();
+        const preferenciaReal = consumosIndex.get(p.id)?.get(mpId);
+        const lotesLista =
+          (preferenciaReal && preferenciaReal.length > 0)
+            ? preferenciaReal
+            : (usadosDaProducao.get(mpId) ?? ["[sem lote elegível]"]);
 
         return {
           materiaPrimaNome: mp?.nome ?? `MP ${mpId}`,
@@ -706,13 +714,5 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
   return { ok: true as const, buffer: pdfBuffer };
 }
 
-/* ===== helper interno para pegar do Map sem ?. encadear muito ===== */
-function reconstruirGet(
-  lotesUsados: Map<number, Map<number, string[]>>,
-  producaoId: number,
-  mpId: number
-): string[] | undefined {
-  const byProd = lotesUsados.get(producaoId);
-  if (!byProd) return undefined;
-  return byProd.get(mpId);
-}
+
+
