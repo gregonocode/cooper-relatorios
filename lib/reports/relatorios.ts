@@ -527,8 +527,17 @@ function reconstruirConsumoPorLotesFIFO(params: {
 
 
 /* ========== Geração de PDF principal ========== */
-const SHOW_ZERO_LINES = true;            // exibir MPs com quantidade 0 (apenas na fórmula)
-const LABEL_ZERO = '[não consumido]';    // rótulo p/ linha de quantidade 0
+const SHOW_ZERO_LINES = true;
+function getComponentMpIdRaw(c: any): unknown {
+  return c?.materia_prima_id ?? c?.materia_prima ?? c?.materiaPrimaId ?? c?.mp_id ?? c?.mpId ?? c?.id_mp ?? c?.id;
+}
+function normalizeMpId(value: unknown): number | null {
+  if (value == null) return null;
+  const s = String(value).trim();
+  if (!s) return null;
+  const n = Number(s);
+  return Number.isFinite(n) ? n : null;
+}
 export async function gerarRelatorioPersonalizadoPDF(opts: {
   from: string;                // "YYYY-MM-DD"
   to: string;                  // "YYYY-MM-DD"
@@ -586,38 +595,49 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
       const formulaNome = formulaById.get(p.formulaId)?.nome ?? `Fórmula ${p.formulaId}`;
 
       const formula = formulaById.get(p.formulaId);
-      const consumoEntries = Object.entries(p.materiaPrimaConsumida || {});
-      const mpIdsFromConsumo = new Set(consumoEntries.map(([k]) => Number(k)));
-      const mpIdsFromFormula = new Set<number>(
-        (formula?.componentes || [])
-          .map((c) => Number(c.materia_prima_id))
-          .filter((x) => Number.isFinite(x))
-      );
-      const allMpIds = new Set<number>([...mpIdsFromFormula, ...mpIdsFromConsumo]);
-      const usadosDaProducaoFIFO = lotesUsados.get(p.id) ?? new Map<number, string[]>();
-      const byMpReal = consumosIndex.get(p.id) ?? new Map<number, string[]>();
+      const rawComponents = (formula?.componentes || []) as any[];
+      const compIds = rawComponents
+        .map((c) => normalizeMpId(getComponentMpIdRaw(c)))
+        .filter((n): n is number => n !== null);
 
-      const linhas = [...allMpIds]
+      const consumedIds = Object.keys(p.materiaPrimaConsumida || {}).map((k) => Number(k)).filter((n) => Number.isFinite(n));
+      const allMpIdsSet = new Set<number>([...compIds, ...consumedIds]);
+      const allMpIds = Array.from(allMpIdsSet);
+      // opcional: ordena por id para consistência visual
+      allMpIds.sort((a, b) => a - b);
+
+      const usadosDaProducaoFIFO = lotesUsados.get(p.id) ?? new Map<number, string[]>();
+
+      const linhas = allMpIds
         .map((mpId) => {
           const mp = mpById.get(mpId);
-          const qtd = Number(p.materiaPrimaConsumida?.[mpId as unknown as string] ?? 0);
+          const qtd = Number(p.materiaPrimaConsumida?.[String(mpId)] ?? 0);
 
-          const real = byMpReal.get(mpId);
-          const fifo = usadosDaProducaoFIFO.get(mpId);
-          const lotesLista =
-            (real && real.length > 0) ? real :
-            (qtd > 0 && fifo && fifo.length > 0) ? fifo :
-            [];
+          // Preferir rastreio REAL (producao_consumos) e cair no FIFO como fallback
+          const preferenciaReal = consumosIndex.get(p.id)?.get(mpId);
+          const lotesLista = qtd > 0
+            ? (preferenciaReal && preferenciaReal.length > 0
+                ? preferenciaReal
+                : (usadosDaProducaoFIFO.get(mpId) ?? []))
+            : [];
+
+          const loteUsadoStr = lotesLista.length > 0 ? lotesLista.join("/") : "[não consumido]";
+
+          if (!SHOW_ZERO_LINES && qtd === 0) return null;
 
           return {
             materiaPrimaNome: mp?.nome ?? `MP ${mpId}`,
             unidade: mp?.unidadeMedida ?? "",
-            loteUsado: lotesLista.length ? lotesLista.join("/") : (qtd > 0 ? "[sem lote elegível]" : LABEL_ZERO),
+            loteUsado: loteUsadoStr,
             quantidadeNecessaria: qtd,
           };
         })
-        .filter((ln) => SHOW_ZERO_LINES ? true : ln.quantidadeNecessaria > 0)
-        .sort((a, b) => a.materiaPrimaNome.localeCompare(b.materiaPrimaNome));
+        .filter(Boolean) as Array<{
+          materiaPrimaNome: string;
+          unidade: string;
+          loteUsado: string;
+          quantidadeNecessaria: number;
+        }>;
 
       return {
         formulaNome,
@@ -729,6 +749,9 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
 
   return { ok: true as const, buffer: pdfBuffer };
 }
+
+
+
 
 
 
