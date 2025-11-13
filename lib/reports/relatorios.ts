@@ -162,9 +162,10 @@ function renderHTML(params: {
       loteProducao: string;
       quantidadeProduzida: number;
       linhas: Array<{
+        materiaPrimaId: number;     // 👈 NOVO: id da MP pra tratar DDG
         materiaPrimaNome: string;
         unidade: string;
-        loteUsado: string;      // "A/B/C" (FIFO simulado) ou "[sem lote elegível]"
+        loteUsado: string;          // "A/B/C" (FIFO simulado) ou "[sem lote elegível]"
         quantidadeNecessaria: number;
       }>;
     }>;
@@ -191,6 +192,7 @@ function renderHTML(params: {
   table { width: 100%; border-collapse: collapse; page-break-inside: auto; }
   thead { display: table-header-group; }
   tr { page-break-inside: avoid; page-break-after: auto; }
+  tbody.block { page-break-inside: avoid; } /* 👈 Cada fórmula (bloco) não quebra de página */
   th, td { border: 1px solid #ddd; padding: 6px; }
   th { background: #FFF4CC; text-align: center; }
   .right { text-align: right; }
@@ -214,7 +216,9 @@ function renderHTML(params: {
         </thead>
         <tbody>
           <tr><td colspan="3" class="group"><strong>Lote de Produção:</strong> ${g.loteProducao}</td></tr>
-          ${g.blocos.map((b) => `
+        </tbody>
+        ${g.blocos.map((b) => `
+          <tbody class="block">
             <tr class="blk-title">
               <td class="center"><strong>${b.formulaNome}</strong></td>
               <td class="center"><strong>${b.loteProducao}</strong></td>
@@ -223,15 +227,19 @@ function renderHTML(params: {
             ${b.linhas.map((ln) => `
               <tr>
                 <td>${"&nbsp;&nbsp;"}${ln.materiaPrimaNome}</td>
-                <td class="center">${ln.loteUsado || "[sem lote elegível]"}</td>
+                <td class="center">${
+                  ln.materiaPrimaId === 23
+                    ? ""
+                    : (ln.loteUsado || "[sem lote elegível]")
+                }</td>
                 <td class="right">${ln.quantidadeNecessaria.toFixed(2)} ${ln.unidade}</td>
               </tr>
             `).join("")}
             <tr>
               <td colspan="3" class="ensaque"><strong>Quantidade de ensaque:</strong></td>
             </tr>
-          `).join("")}
-        </tbody>
+          </tbody>
+        `).join("")}
       </table>
     </div>
   `).join("")}
@@ -400,7 +408,6 @@ export function normalizarDadosCarregados(raw: {
   for (const l of lotesNorm) {
     lotesById.set(l.id, l.numeroLote);
   }
-
 
   // 🔹 NOVO: índice de consumos reais
   const consumosIndex: ConsumosIndex = new Map();
@@ -630,6 +637,7 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
           if (!SHOW_ZERO_LINES && qtdFinal === 0) return null;
 
           return {
+            materiaPrimaId: mpId, // 👈 passa id da MP pro HTML decidir o lote (caso DDG)
             materiaPrimaNome: mp?.nome ?? `MP ${mpId}`,
             unidade: mp?.unidadeMedida ?? "",
             loteUsado: loteUsadoStr,
@@ -637,6 +645,7 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
           };
         })
         .filter(Boolean) as Array<{
+          materiaPrimaId: number;
           materiaPrimaNome: string;
           unidade: string;
           loteUsado: string;
@@ -674,6 +683,7 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
   }
 
   // ======= Cabeçalho e rodapé =======
+
   const headerTemplate = `
     <div style="font-size:10px; width:100%; padding:0 12mm;">
       <div style="display:grid; grid-template-columns: 1fr auto 1fr; align-items:center; column-gap:12px;">
@@ -753,10 +763,3 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
 
   return { ok: true as const, buffer: pdfBuffer };
 }
-
-
-
-
-
-
-
