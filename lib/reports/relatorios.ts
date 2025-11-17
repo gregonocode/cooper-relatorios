@@ -624,15 +624,52 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
         .map((mpId) => {
           const mp = mpById.get(mpId);
           const real = consumosIndex.get(p.id)?.get(mpId) ?? null;
+
+          // Quantidade final: prioriza o que veio de producao_consumos (real),
+          // se não tiver, cai pro JSON.
           const qtdJson = Number(p.materiaPrimaConsumida?.[String(mpId)] ?? 0);
           const qtdFinal = (real?.total ?? qtdJson ?? 0);
 
+          // Lotes sugeridos pelo FIFO global
           const fifo = usadosDaProducaoFIFO.get(mpId) ?? ["[sem lote elegível]"];
-          const lotesPrefer = real?.lotes ?? [];
-          const lotesLista = (lotesPrefer.length > 0) ? lotesPrefer : fifo;
+          const fifoIsPlaceholder =
+            fifo.length === 1 && fifo[0] === "[sem lote elegível]";
 
-          let loteUsadoStr = lotesLista.length ? lotesLista.join("/") : "[sem lote elegível]";
-          if (qtdFinal === 0) loteUsadoStr = "[não consumido]";
+          // Lotes registrados “reais”
+          const realLotes = real?.lotes ?? [];
+
+          let lotesLista: string[] = [];
+
+          // Casos:
+          // 1) Só FIFO tem algo útil  -> usa FIFO
+          // 2) Só REAL tem algo       -> usa REAL
+          // 3) Os dois têm algo       -> faz união (FIFO + REAL)
+          // 4) Nenhum tem (só placeholder) -> mantém placeholder
+          if (realLotes.length === 0 && !fifoIsPlaceholder) {
+            lotesLista = fifo;
+          } else if (realLotes.length > 0 && fifoIsPlaceholder) {
+            lotesLista = realLotes;
+          } else if (realLotes.length > 0 && !fifoIsPlaceholder) {
+            // Une FIFO + REAL sem duplicar, preservando a ordem FIFO primeiro
+            const merged = [...fifo, ...realLotes];
+            const seen = new Set<string>();
+            lotesLista = merged.filter((lt) => {
+              if (seen.has(lt)) return false;
+              seen.add(lt);
+              return true;
+            });
+          } else {
+            // realLotes vazio e FIFO só com "[sem lote elegível]"
+            lotesLista = fifo;
+          }
+
+          let loteUsadoStr = lotesLista.length
+            ? lotesLista.join("/")
+            : "[sem lote elegível]";
+
+          if (qtdFinal === 0) {
+            loteUsadoStr = "[não consumido]";
+          }
 
           if (!SHOW_ZERO_LINES && qtdFinal === 0) return null;
 
