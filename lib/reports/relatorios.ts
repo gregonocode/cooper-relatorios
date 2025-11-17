@@ -638,28 +638,17 @@ export async function gerarRelatorioPersonalizadoPDF(opts: {
           // Lotes registrados “reais”
           const realLotes = real?.lotes ?? [];
 
-          let lotesLista: string[] = [];
+          let lotesLista: string[];
 
-          // Casos:
-          // 1) Só FIFO tem algo útil  -> usa FIFO
-          // 2) Só REAL tem algo       -> usa REAL
-          // 3) Os dois têm algo       -> faz união (FIFO + REAL)
-          // 4) Nenhum tem (só placeholder) -> mantém placeholder
-          if (realLotes.length === 0 && !fifoIsPlaceholder) {
+          // Regra:
+          // - Se o FIFO tem lotes "de verdade", SEMPRE usa só o FIFO (confia no FIFO).
+          // - Se o FIFO só tem "[sem lote elegível]" e existir lote real, usa o REAL como fallback.
+          // - Se nenhum dos dois tem lote útil, fica com o placeholder do FIFO.
+          if (!fifoIsPlaceholder) {
             lotesLista = fifo;
-          } else if (realLotes.length > 0 && fifoIsPlaceholder) {
+          } else if (realLotes.length > 0) {
             lotesLista = realLotes;
-          } else if (realLotes.length > 0 && !fifoIsPlaceholder) {
-            // Une FIFO + REAL sem duplicar, preservando a ordem FIFO primeiro
-            const merged = [...fifo, ...realLotes];
-            const seen = new Set<string>();
-            lotesLista = merged.filter((lt) => {
-              if (seen.has(lt)) return false;
-              seen.add(lt);
-              return true;
-            });
           } else {
-            // realLotes vazio e FIFO só com "[sem lote elegível]"
             lotesLista = fifo;
           }
 
